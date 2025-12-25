@@ -125,7 +125,6 @@ class ModelAdapter(BaseModelAdapter):
         self.image_transform = build_transform()
         self.vae_transform = ImageTransform(1024, 512, 16)
         self.vit_transform = ImageTransform(980, 378, 14)
-        self.log_memory_usage("After model_init")
 
     def run_one_task(self, task_name: str, meta_info: Dict[str, Any]):
         # Determine task type from meta info
@@ -207,6 +206,7 @@ class ModelAdapter(BaseModelAdapter):
         think_simple = bool(extra_args.get("think_simple", False))
         use_vit = bool(extra_args.get("use_vit", False))
         generate_reflection_image = bool(extra_args.get("generate_reflection_image", False))
+        print(f'generate_reflection_image: {generate_reflection_image}')
         
         # 1. Update cache with reflection prompt
         past_key_values, curr_kvlens, curr_rope = self._update_text_cache_with_prompts(
@@ -399,6 +399,9 @@ class ModelAdapter(BaseModelAdapter):
         extra_args = getattr(self, "extra_args", {}) or {}
         print(f"extra_args: {extra_args}")
         save_items = bool(extra_args.get("save_items", True))
+        # If True, ignore existing per-item cache under output_dir/items and regenerate.
+        # Useful when switching datasets (e.g. enabling `reflection`) or changing generation flags.
+        force_regen = bool(extra_args.get("force_regen", False))
         
         # T2I specific args
         num_images = int(extra_args.get("num_images", 1))
@@ -429,7 +432,6 @@ class ModelAdapter(BaseModelAdapter):
         )
 
         for idx in range(rank, text_num, world_size):
-            self.log_memory_usage(f"Start item {idx}")
             data = self.task_manager.get_data(task_name, idx)
             prompt = data.get("prompt") or data.get("question")
             question_id = str(data.get("id") or data.get("question_id") or idx)
@@ -447,7 +449,7 @@ class ModelAdapter(BaseModelAdapter):
                     raise KeyError(f"Missing source image path for sample {question_id}")
 
             # Cache check
-            cached = self.load_item_if_exists(question_id, meta_info)
+            cached = None if force_regen else self.load_item_if_exists(question_id, meta_info)
             if cached is not None:
                 cached_images = cached.get("images", [])
                 if isinstance(cached_images, str):
@@ -538,8 +540,7 @@ class ModelAdapter(BaseModelAdapter):
                     image_list.append(r2_image)
                 if think_list is None:
                     think_list = []
-                think_list.append(r2_think                )
-            self.log_memory_usage(f"After generation item {idx}")
+                think_list.append(r2_think)
 
             sample_dir = os.path.join(output_dir, "samples")
             os.makedirs(sample_dir, exist_ok=True)
@@ -698,7 +699,6 @@ class ModelAdapter(BaseModelAdapter):
             return new_width, new_height
 
         device = next(self.gen_model.parameters()).device
-        self.log_memory_usage("Start _edit_image")
 
         # Hyperparameters.
         num_timesteps = int(extra_args.get("num_timesteps", 50))
@@ -898,7 +898,6 @@ class ModelAdapter(BaseModelAdapter):
                 cfg_text_args, device
             )
             cfg_img_args = self._move_generation_input_to_device(cfg_img_args, device)
-            self.log_memory_usage("Before edit generate_image")
             unpacked_latent = self.model.generate_image(
                 past_key_values=past_key_values,
                 cfg_text_past_key_values=cfg_text_past_key_values,
@@ -915,7 +914,6 @@ class ModelAdapter(BaseModelAdapter):
                 **cfg_text_args,
                 **cfg_img_args,
             )
-        self.log_memory_usage("After edit generate_image")
 
         decoded_images = self._decode_latents(unpacked_latent, h, w, device)
         if return_state:
@@ -952,7 +950,6 @@ class ModelAdapter(BaseModelAdapter):
 
         for question_id, question, images in data_loader:
             if cnt == 0:
-                self.log_memory_usage("Before first VQA item")
                 start_time = time.perf_counter()
             cnt += 1
 
@@ -970,7 +967,6 @@ class ModelAdapter(BaseModelAdapter):
 
             # unwrap batch dimension (batch=1)
             images, prompt = process_conversation(images[0], question[0])
-            self.log_memory_usage(f"Before VQA chat item {cnt}")
 
             pred = self.model.chat(
                 self.tokenizer,
@@ -980,7 +976,6 @@ class ModelAdapter(BaseModelAdapter):
                 prompt=prompt,
                 max_length=max_new_tokens,
             )
-            self.log_memory_usage(f"After VQA chat item {cnt}")
 
             results.append(
                 {
@@ -1072,7 +1067,6 @@ class ModelAdapter(BaseModelAdapter):
             cfg_img_scale = 1.0
 
         device = next(self.gen_model.parameters()).device
-        self.log_memory_usage("Start _generate_images")
         image_list = []
         think_list: list[str] | None = [] if think else None
         last_state = None
@@ -1150,7 +1144,6 @@ class ModelAdapter(BaseModelAdapter):
             generation_input_cfg = self._move_generation_input_to_device(
                 generation_input_cfg, device
             )
-            self.log_memory_usage("Before model.generate_image")
 
             with torch.no_grad():
                 with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
@@ -1177,7 +1170,6 @@ class ModelAdapter(BaseModelAdapter):
                         ],
                         **generation_input,
                     )
-            self.log_memory_usage("After model.generate_image")
 
             decoded_batch = self._decode_latents(
                 unpacked_latent, resolution, resolution, device

@@ -1,11 +1,11 @@
 tasks:
   files:
     - file: tasks/t2i/wise/wise.py
-      data_root: /share/project/mmdataset/t2i/wise/
+      data_root: /share/project/mmdataset/t2i/wise/reflection
     # - file: tasks/t2i/longtext_bench/longtext_bench.py
     #   data_root: /share/project/mmdataset/t2i/LongText-Bench/
   try_run: false
-  output_dir: outputs/Bagel_Reflection/
+  output_dir: outputs/Bagel_Reflection_without_think/
   num_workers: 4
   skip: false
 
@@ -24,6 +24,6 @@ extra_args:
   cfg_interval: [0.4, 1.0]
   cfg_renorm_min: 0.0
   timestep_shift: 3.0
-  think: true
+  think: false
   think_simple: false
-  generate_reflection_image: false
+  generate_reflection_image: true
