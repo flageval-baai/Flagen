@@ -1013,6 +1013,7 @@ class Bagel(PreTrainedModel):
         max_length: int,
         do_sample: bool = False,
         temperature: float = 1.0,
+        past_key_values: Optional[NaiveCache] = None,
     ):
         device = next(self.parameters()).device
 
@@ -1024,7 +1025,11 @@ class Bagel(PreTrainedModel):
             new_token_ids = new_token_ids.to(device)
 
         # prefill
-        past_key_values = NaiveCache(self.config.llm_config.num_hidden_layers)
+        if past_key_values is None:
+            past_key_values = NaiveCache(self.config.llm_config.num_hidden_layers)
+        else:
+            past_key_values = past_key_values.to(device)
+
         newlens = [0]
         new_rope = [0]
 

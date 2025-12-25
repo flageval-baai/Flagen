@@ -37,7 +37,7 @@ class Text2ImageBaseDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, index: int) -> Dict:
-        return {"prompt": self.data[index]["prompt"], "id": str(self.data[index]["id"])}
+        return {"prompt": self.data[index]["prompt"], "id": str(self.data[index]["id"]), "reflection": self.data[index].get("reflection", None)}
 
     def get_data(self, index: int):
         assert index < self.text_number()

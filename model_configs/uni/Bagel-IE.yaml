@@ -8,7 +8,7 @@ tasks:
       data_root: /share/project/mmdataset/t2i/GEdit-Bench
   debug: false
   try_run: false
-  output_dir: outputs/Bagel_Gen_new_cfg/
+  output_dir: outputs/Bagel_Gen_test/
   num_workers: 8
   skip: false
 

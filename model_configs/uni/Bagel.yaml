@@ -4,15 +4,10 @@ tasks:
       data_root: /share/project/mmdataset/t2i/wise/
     # - file: tasks/t2i/longtext_bench/longtext_bench.py
     #   data_root: /share/project/mmdataset/t2i/LongText-Bench/
-  debug: false
   try_run: false
-  output_dir: outputs/Bagel_Gen/
-  num_workers: 8
+  output_dir: outputs/Bagel_Reflection/
+  num_workers: 4
   skip: false
-
-server:
-  local_mode: true
-  quiet: false
 
 model:
   model_name: Bagel
@@ -29,5 +24,6 @@ extra_args:
   cfg_interval: [0.4, 1.0]
   cfg_renorm_min: 0.0
   timestep_shift: 3.0
-  think: false
+  think: true
   think_simple: false
+  generate_reflection_image: false
