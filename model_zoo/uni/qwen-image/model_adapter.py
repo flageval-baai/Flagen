@@ -82,11 +82,11 @@ class ModelAdapter(BaseModelAdapter):
 
     def _run_t2i_task(self, task_name: str, meta_info: Dict[str, Any]):
         data_len = meta_info["length"]
-        output_dir = meta_info["output_dir"]
+        sample_dir = meta_info["output_dir"]
         extra_args = getattr(self, "extra_args", {}) or {}
         print(f"extra_args: {extra_args}")
         save_items = bool(extra_args.get("save_items", True))
-        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(sample_dir, exist_ok=True)
         os.makedirs(self.get_items_dir(meta_info), exist_ok=True)
         output_info = []
         world_size = (
@@ -102,15 +102,20 @@ class ModelAdapter(BaseModelAdapter):
             print(f"data: {data}")
             prompt = data.get("prompt") or data.get("question")
             question_id = str(data.get("id") or data.get("question_id") or idx)
-            image_list = self._run_single_prompt(prompt, question_id, output_dir)
+            image_list = self._run_single_prompt(prompt, question_id, sample_dir)
+            
+            sample_dir = os.path.join(sample_dir, "samples")
+            os.makedirs(sample_dir, exist_ok=True)
+            
             image_names: list[str] = []
             image_paths: list[str] = []
             for i, image in enumerate(image_list):
                 image_name = f"{question_id}_{i:05}.png"
-                image_path = os.path.join(output_dir, image_name)
-                image.save(image_path)
+                sample_path = os.path.join(sample_dir, image_name)
+                image.save(sample_path)
                 image_names.append(image_name)
-                image_paths.append(image_path)
+                image_paths.append(sample_path)
+            
             out_item_result: dict[str, Any] = {
                 "question_id": question_id,
                 "id": question_id,
