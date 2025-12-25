@@ -126,8 +126,6 @@ class ServerWrapper:
         self.run_cfg_path = None
         self.run_cfg = None
         self.output_dir = None
-        cfg = Config.fromfile(args.cfg)
-        self.server_cfg = cfg.get("server", {})
 
     def start(self):
         """Main method to start the server and run the model"""
@@ -141,7 +139,6 @@ class ServerWrapper:
             if isinstance(self.run_cfg.get("model", {}), dict)
             else {}
         )
-            
         if model_cfg.get("exec"):
             self.exec = model_cfg.get("exec")
         if self.exec is None:
@@ -151,7 +148,9 @@ class ServerWrapper:
             self.exec = "model_zoo/vlm/api_model/model_adapter.py"
 
         self.output_dir = self.run_cfg["tasks"]["output_dir"]
-
+        
+        self.port = model_cfg.get("port", None)
+        self.cuda_visible_devices = model_cfg.get("cuda_visible_devices", None)
         tasks_cfg = (
             self.run_cfg.get("tasks", {})
             if isinstance(self.run_cfg.get("tasks", {}), dict)
@@ -178,15 +177,13 @@ class ServerWrapper:
 
     def run_model_adapter(self):
         try:
-            use_torchrun, num_procs, master_port = self._should_use_torchrun()
+            use_torchrun, num_procs = self._should_use_torchrun()
             command = self._build_command(
-                use_torchrun=use_torchrun, num_procs=num_procs, master_port=master_port
+                use_torchrun=use_torchrun, num_procs=num_procs
             )
             env = os.environ.copy()
-            if isinstance(self.server_cfg, dict):
-                cuda_visible_devices = self.server_cfg.get("cuda_visible_devices")
-                if cuda_visible_devices:
-                    env["CUDA_VISIBLE_DEVICES"] = str(cuda_visible_devices)
+            if self.cuda_visible_devices is not None:
+                env["CUDA_VISIBLE_DEVICES"] = self.cuda_visible_devices
             if use_torchrun:
                 logger.info(f"Launching adapter with torchrun ({num_procs} processes)")
             # Create a new process group
@@ -218,13 +215,9 @@ class ServerWrapper:
         exec_path = osp.normpath(self.exec or "")
         uni_marker = f"model_zoo{osp.sep}uni{osp.sep}"
         is_uni_adapter = uni_marker in exec_path and exec_path.endswith(".py")
-        if self.server_cfg.get("port") is not None:
-            master_port = int(self.server_cfg.get("port"))
-        else:
-            master_port = None
-        return is_uni_adapter and num_workers > 1, num_workers, master_port
+        return is_uni_adapter and num_workers > 1, num_workers
 
-    def _build_command(self, use_torchrun: bool = False, num_procs: int = 1, master_port: int | None = None):
+    def _build_command(self, use_torchrun: bool = False, num_procs: int = 1):
         """Private method to build the command for model execution"""
         command = []
         if self.exec.endswith("py"):
@@ -238,10 +231,10 @@ class ServerWrapper:
                         "--nproc_per_node",
                         str(num_procs),
                     ]
-                if master_port is not None:
+                if self.port is not None:
                     command += [
                         "--master-port",
-                        str(master_port),
+                        str(self.port),
                     ]
             else:
                 command += [

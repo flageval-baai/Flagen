@@ -9,17 +9,15 @@ tasks:
   output_dir: outputs/Qwen-Image_Gen/
   num_workers: 4
   skip: false
-
-server:
-  local_mode: true
-  quiet: false
-  port: 28000
-  cuda_visible_devices: 4,5,6,7
+  
 
 model:
   model_name: Qwen-Image
   model_path: /share/project/models/vlm/Qwen-Image
+  processor_path: /share/project/models/vlm/Qwen2.5-VL-7B-Instruct
   exec: model_zoo/uni/qwen-image/model_adapter.py
+  port: 28000
+  cuda_visible_devices: 4,5,6,7
 
 extra_args:
   save_items: true
