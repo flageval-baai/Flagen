@@ -22,6 +22,7 @@ wise_evaluator = dict(
     max_workers=10,
     validate_prompt_ids=False,
     category="all",
+    eval_second_turn=True,
 )
 
 

@@ -145,6 +145,7 @@ class WiseEvaluator:
         max_image_size: Optional[int] = None,
         min_short_side: Optional[int] = None,
         max_long_side: Optional[int] = None,
+        eval_second_turn: bool = False,
         validate_prompt_ids: bool = False,
         category: str = "all",
         use_cache: bool = True,
@@ -164,6 +165,9 @@ class WiseEvaluator:
         self.max_image_size = max_image_size
         self.min_short_side = min_short_side
         self.max_long_side = max_long_side
+        # If True and output_info["images"] is a list with >= 2 items, also evaluate images[1].
+        # The first image (images[0]) remains the default and populates existing wise_* fields.
+        self.eval_second_turn = bool(eval_second_turn)
         self.validate_prompt_ids = validate_prompt_ids
         self.category = category
         self.use_cache = use_cache
@@ -193,6 +197,9 @@ class WiseEvaluator:
             retry_time=self.retry_time,
         )
         self.client = HttpClient(**self._client_kwargs)
+
+    def _resolve_image_path(self, output_dir: str, image_rel: str) -> str:
+        return image_rel if osp.isabs(image_rel) else osp.join(output_dir, "samples", image_rel)
 
     def _build_messages(
         self, prompt: str, explanation: str, image_b64: str
@@ -274,7 +281,8 @@ class WiseEvaluator:
     def get_metric_results(
         self, output_info: List[Dict], output_dir: str, annotations: Dict, **kwargs
     ) -> Dict[str, Any]:
-        tasks: List[Tuple[int, str, str, str]] = []
+        # task tuple: (prompt_id, turn_idx, prompt, explanation, image_path)
+        tasks: List[Tuple[int, int, str, str, str]] = []
         present_prompt_ids: set[int] = set()
 
         for info in output_info:
@@ -288,42 +296,66 @@ class WiseEvaluator:
             prompt = ann.get("Prompt", ann.get("prompt", info.get("prompt", "")))
             explanation = ann.get("Explanation", ann.get("explanation", ""))
 
-            image_rel = info.get("images")
-            if isinstance(image_rel, list):
-                image_rel = image_rel[0]
-            if not image_rel:
-                continue
-            image_path = osp.join(output_dir, "samples", image_rel)
+            images = info.get("images")
+            image_list: List[str] = []
+            if isinstance(images, list):
+                image_list = [str(x) for x in images if x]
+            elif isinstance(images, str) and images:
+                image_list = [images]
 
-            if not osp.exists(image_path):
-                logger.warning(f"Missing image: {image_path}")
+            if not image_list:
                 continue
-            tasks.append((prompt_id, str(prompt), str(explanation), image_path))
+
+            # Turn 1 (default)
+            image_path_1 = self._resolve_image_path(output_dir, image_list[0])
+            if not osp.exists(image_path_1):
+                logger.warning(f"Missing image: {image_path_1}")
+            else:
+                tasks.append((prompt_id, 1, str(prompt), str(explanation), image_path_1))
+
+            # Turn 2 (optional)
+            if self.eval_second_turn and len(image_list) >= 2:
+                image_path_2 = self._resolve_image_path(output_dir, image_list[1])
+                if not osp.exists(image_path_2):
+                    logger.warning(f"Missing second-turn image: {image_path_2}")
+                else:
+                    tasks.append(
+                        (prompt_id, 2, str(prompt), str(explanation), image_path_2)
+                    )
 
         if tasks:
             logger.info(
-                f"WiseEvaluator: evaluating {len(tasks)} images (use_cache={self.use_cache})"
+                f"WiseEvaluator: evaluating {len(tasks)} images "
+                f"(eval_second_turn={self.eval_second_turn}, use_cache={self.use_cache})"
             )
         else:
             logger.info("WiseEvaluator: nothing to evaluate (no valid items)")
 
         # Multi-threaded evaluation
-        exist_full: Dict[int, Dict[str, Any]] = {}
-        exist_scores: Dict[int, Dict[str, Any]] = {}
+        exist_full_1: Dict[int, Dict[str, Any]] = {}
+        exist_scores_1: Dict[int, Dict[str, Any]] = {}
+        exist_full_2: Dict[int, Dict[str, Any]] = {}
+        exist_scores_2: Dict[int, Dict[str, Any]] = {}
         with ThreadPoolExecutor(max_workers=self.max_workers) as ex:
-            future_to_pid = {
-                ex.submit(self._evaluate_one, pid, p, e, ip): pid
-                for pid, p, e, ip in tasks
+            future_to_key = {
+                ex.submit(self._evaluate_one, pid, p, e, ip): (pid, turn)
+                for pid, turn, p, e, ip in tasks
             }
-            for fut in as_completed(future_to_pid):
-                pid = future_to_pid[fut]
+            for fut in as_completed(future_to_key):
+                pid, turn = future_to_key[fut]
                 try:
                     full_rec, score_rec = fut.result()
                 except Exception as err:
-                    logger.warning(f"WiseEvaluator: failed on prompt_id={pid}: {err}")
+                    logger.warning(
+                        f"WiseEvaluator: failed on prompt_id={pid}, turn={turn}: {err}"
+                    )
                     continue
-                exist_full[pid] = full_rec
-                exist_scores[pid] = score_rec
+                if turn == 2:
+                    exist_full_2[pid] = full_rec
+                    exist_scores_2[pid] = score_rec
+                else:
+                    exist_full_1[pid] = full_rec
+                    exist_scores_1[pid] = score_rec
 
         # Optional prompt_id validation (aligned with tasks/t2i/wise/calculate.py)
         if self.validate_prompt_ids:
@@ -336,74 +368,106 @@ class WiseEvaluator:
                         f"{sorted(list(missing))}"
                     )
 
-        score_sorted = [exist_scores[k] for k in sorted(exist_scores.keys())]
-        full_by_id: Dict[int, Dict[str, Any]] = {
-            int(k): v for k, v in exist_full.items() if _safe_int(k) is not None
+        score_sorted_1 = [exist_scores_1[k] for k in sorted(exist_scores_1.keys())]
+        score_sorted_2 = [exist_scores_2[k] for k in sorted(exist_scores_2.keys())]
+        full_by_id_1: Dict[int, Dict[str, Any]] = {
+            int(k): v for k, v in exist_full_1.items() if _safe_int(k) is not None
+        }
+        full_by_id_2: Dict[int, Dict[str, Any]] = {
+            int(k): v for k, v in exist_full_2.items() if _safe_int(k) is not None
         }
 
         # Attach per-sample results back to output_info
-        scores_by_id = {
+        scores_by_id_1 = {
             int(r["prompt_id"]): r
-            for r in score_sorted
+            for r in score_sorted_1
+            if _safe_int(r.get("prompt_id")) is not None
+        }
+        scores_by_id_2 = {
+            int(r["prompt_id"]): r
+            for r in score_sorted_2
             if _safe_int(r.get("prompt_id")) is not None
         }
         for info in output_info:
             pid = _safe_int(info.get("id"))
-            if pid is None or pid not in scores_by_id:
-                continue
-            r = scores_by_id[pid]
-            info["wise_consistency"] = r.get("consistency", 0.0)
-            info["wise_realism"] = r.get("realism", 0.0)
-            info["wise_aesthetic_quality"] = r.get("aesthetic_quality", 0.0)
-            info["wiscore"] = r.get("wiscore", 0.0)
-            info["wise_category"] = r.get("category")
-            # Save raw evaluator text alongside scores (requested: save eval_txt together).
-            full_rec = full_by_id.get(pid, {})
-            info["wise_eval_txt"] = full_rec.get("evaluation", "")
-
-        # Aggregate results (aligned with calculate.py)
-        metric_scores = defaultdict(list)
-        for r in score_sorted:
-            pid = _safe_int(r.get("prompt_id"))
             if pid is None:
                 continue
-            metric_scores["wiscore_mean"].append(float(r.get("wiscore", 0.0)))
-            cat = _prompt_id_to_category(pid)
-            if cat is not None:
-                metric_scores[f"wiscore_{cat}"].append(float(r.get("wiscore", 0.0)))
+
+            # Turn 1 fields (backward-compatible)
+            if pid in scores_by_id_1:
+                r1 = scores_by_id_1[pid]
+                info["wise_consistency"] = r1.get("consistency", 0.0)
+                info["wise_realism"] = r1.get("realism", 0.0)
+                info["wise_aesthetic_quality"] = r1.get("aesthetic_quality", 0.0)
+                info["wiscore"] = r1.get("wiscore", 0.0)
+                info["wise_category"] = r1.get("category")
+                # Save raw evaluator text alongside scores (requested: save eval_txt together).
+                full_rec_1 = full_by_id_1.get(pid, {})
+                info["wise_eval_txt"] = full_rec_1.get("evaluation", "")
+
+            # Turn 2 fields (optional, new names)
+            if self.eval_second_turn and pid in scores_by_id_2:
+                r2 = scores_by_id_2[pid]
+                info["wise2_consistency"] = r2.get("consistency", 0.0)
+                info["wise2_realism"] = r2.get("realism", 0.0)
+                info["wise2_aesthetic_quality"] = r2.get("aesthetic_quality", 0.0)
+                info["wiscore2"] = r2.get("wiscore", 0.0)
+                info["wise2_category"] = r2.get("category")
+                full_rec_2 = full_by_id_2.get(pid, {})
+                info["wise2_eval_txt"] = full_rec_2.get("evaluation", "")
+
+        def _aggregate(score_sorted: List[Dict[str, Any]], base: str) -> Dict[str, Any]:
+            # Aggregate results (aligned with tasks/t2i/wise/calculate.py)
+            metric_scores = defaultdict(list)
+            for r in score_sorted:
+                pid = _safe_int(r.get("prompt_id"))
+                if pid is None:
+                    continue
+                metric_scores[f"{base}_mean"].append(float(r.get("wiscore", 0.0)))
+                cat = _prompt_id_to_category(pid)
+                if cat is not None:
+                    metric_scores[f"{base}_{cat}"].append(float(r.get("wiscore", 0.0)))
+
+            results: Dict[str, Any] = {}
+            mean_key = f"{base}_mean"
+            if metric_scores[mean_key]:
+                results[mean_key] = round(
+                    sum(metric_scores[mean_key]) / len(metric_scores[mean_key]), 4
+                )
+
+            ordered_categories = [
+                "CULTURE",
+                "TIME",
+                "SPACE",
+                "BIOLOGY",
+                "PHYSICS",
+                "CHEMISTRY",
+            ]
+            for cat in ordered_categories:
+                key = f"{base}_{cat}"
+                vals = metric_scores.get(key, [])
+                if vals:
+                    results[key] = round(sum(vals) / len(vals), 4)
+                    results[f"{key}_num"] = len(vals)
+
+            # Overall WiScore across all categories (same weights as calculate.py)
+            if all(f"{base}_{cat}" in results for cat in ordered_categories):
+                results[f"{base}_overall"] = round(
+                    0.4 * results[f"{base}_CULTURE"]
+                    + 0.167 * results[f"{base}_TIME"]
+                    + 0.133 * results[f"{base}_SPACE"]
+                    + 0.1 * results[f"{base}_BIOLOGY"]
+                    + 0.1 * results[f"{base}_PHYSICS"]
+                    + 0.1 * results[f"{base}_CHEMISTRY"],
+                    4,
+                )
+            return results
 
         results: Dict[str, Any] = {}
-        if metric_scores["wiscore_mean"]:
-            results["wiscore_mean"] = round(
-                sum(metric_scores["wiscore_mean"]) / len(metric_scores["wiscore_mean"]),
-                4,
-            )
-
-        ordered_categories = [
-            "CULTURE",
-            "TIME",
-            "SPACE",
-            "BIOLOGY",
-            "PHYSICS",
-            "CHEMISTRY",
-        ]
-        for cat in ordered_categories:
-            key = f"wiscore_{cat}"
-            vals = metric_scores.get(key, [])
-            if vals:
-                results[key] = round(sum(vals) / len(vals), 4)
-                results[f"{key}_num"] = len(vals)
-
-        # Overall WiScore across all categories (same weights as calculate.py)
-        if all(f"wiscore_{cat}" in results for cat in ordered_categories):
-            results["wiscore_overall"] = round(
-                0.4 * results["wiscore_CULTURE"]
-                + 0.167 * results["wiscore_TIME"]
-                + 0.133 * results["wiscore_SPACE"]
-                + 0.1 * results["wiscore_BIOLOGY"]
-                + 0.1 * results["wiscore_PHYSICS"]
-                + 0.1 * results["wiscore_CHEMISTRY"],
-                4,
-            )
+        # Turn 1 aggregates keep original key names.
+        results.update(_aggregate(score_sorted_1, base="wiscore"))
+        # Turn 2 aggregates use a distinct prefix: wiscore2_*
+        if self.eval_second_turn and score_sorted_2:
+            results.update(_aggregate(score_sorted_2, base="wiscore2"))
 
         return results
