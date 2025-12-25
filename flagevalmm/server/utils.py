@@ -11,12 +11,6 @@ import importlib.util
 from flagevalmm.registry import DATASETS, EVALUATORS
 import os.path as osp
 
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_random_exponential,
-)
-
 from dataclasses import dataclass, field
 from typing import Dict, Union
 
