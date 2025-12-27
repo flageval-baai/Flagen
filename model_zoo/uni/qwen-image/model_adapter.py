@@ -147,8 +147,46 @@ class ModelAdapter(BaseModelAdapter):
     def _run_i2i_task(self, task_name: str, meta_info: Dict[str, Any]):
         pass
     
+    def _run_chat(self, model, processor, question, images):
+        
+        messages = [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": question
+                },
+            ]
+        }]
+        for image in images:
+            messages[0]["content"].append({
+                "type": "image",
+                "image": image
+            })
+        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        image_inputs, video_inputs = process_vision_info(messages)
+        
+        inputs = processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to("cuda")
+        
+        generated_ids = model.generate(**inputs, max_new_tokens=1024)
+        generated_ids_trimmed = [
+            out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        ]
+        output_text = processor.batch_decode(
+            generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )
+        return output_text
+        
     def _run_vqa_task(self, task_name: str, meta_info: Dict[str, Any]):
         assert self.processor_path is not None, "processor_path is not set"
+        extra_args = getattr(self, "extra_args", {}) or {}
+        save_items = bool(extra_args.get("save_items", True))
         processor = AutoProcessor.from_pretrained(self.processor_path)
         model = self.pipe.text_encoder
         data_len = meta_info["length"]
@@ -167,49 +205,29 @@ class ModelAdapter(BaseModelAdapter):
         
         for idx in tqdm(range(rank, data_len, world_size), desc="Running VQA task"):
             data = self.task_manager.get_data(task_name, idx)
-            print(f"data: {data}")
             question = data.get("question")
             images = data.get("images")
             question_id = str(data.get("id") or data.get("question_id") or idx)
-            messages = [{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": question
-                    },
-                    {
-                        "type": "image",
-                        "image": images[0]
-                    }
-                ]
-            }]
-            text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            image_inputs, video_inputs = process_vision_info(messages)
-            inputs = processor(
-                text=[text],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
-            ).to("cuda")
-            outputs = model.generate(**inputs, max_new_tokens=1024)
-            generated_ids_trimmed = [
-                out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-            ]
-            output_text = processor.batch_decode(
-                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-            )
+            output_text = self._run_chat(model, processor, question, images)
             output_info.append(
                 {
                     "question_id": question_id,
-                    "id": question_id,
                     "prompt": question,
-                    "response": output_text
+                    "answer": output_text
                 }
             )
-        with open(os.path.join(output_dir, f"{task_name}.json"), "w") as f:
-            json.dump(output_info, f, indent=2, ensure_ascii=False)
+            if save_items:
+                self.save_item(
+                    output_info[-1],
+                    question_id=question_id,
+                    meta_info=meta_info,
+                )
+        rank = self.accelerator.state.local_process_index
+        self.save_result(output_info, meta_info, rank=rank)
+        if self.accelerator is not None:
+            self.accelerator.wait_for_everyone()
+            if self.accelerator.is_main_process:
+                self.collect_results_and_save(meta_info)
             
 if __name__ == "__main__":
     args = parse_args()
