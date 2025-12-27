@@ -1,0 +1,29 @@
+tasks:
+  files:
+    - file: tasks/t2i/wise/recaption.py
+      data_root: /share/project/mmdataset/t2i/wise/recaption
+    # - file: tasks/t2i/longtext_bench/longtext_bench.py
+    #   data_root: /share/project/mmdataset/t2i/LongText-Bench/
+  try_run: true
+  output_dir: outputs/Bagel_Recaption/
+  num_workers: 4
+  skip: false
+
+model:
+  model_name: Bagel
+  model_path: /share/project/models/vlm/BAGEL-7B-MoT
+  exec: model_zoo/uni/bagel/model_adapter.py
+
+extra_args:
+  save_items: true
+  num_images: 1
+  batch_size: 1
+  cfg_scale: 4.0
+  resolution: 1024
+  num_timesteps: 50
+  cfg_interval: [0.4, 1.0]
+  cfg_renorm_min: 0.0
+  timestep_shift: 3.0
+  think: false
+  think_simple: false
+  generate_reflection_image: true
