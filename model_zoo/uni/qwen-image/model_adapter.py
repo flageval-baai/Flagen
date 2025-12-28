@@ -204,9 +204,12 @@ class ModelAdapter(BaseModelAdapter):
         for idx in tqdm(range(rank, data_len, world_size), desc="Running VQA task"):
             data = self.task_manager.get_data(task_name, idx)
             question = data.get("question")
-            images = data.get("images")
+            img_path =  (
+                data.get("images")
+                or data.get("img_path")
+            )
             question_id = str(data.get("id") or data.get("question_id") or idx)
-            output_text = self._run_chat(model, processor, question, images)
+            output_text = self._run_chat(model, processor, question, img_path)
             output_info.append(
                 {
                     "question_id": question_id,
