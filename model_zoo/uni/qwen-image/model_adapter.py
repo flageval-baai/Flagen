@@ -180,7 +180,7 @@ class ModelAdapter(BaseModelAdapter):
         ]
         output_text = processor.batch_decode(
             generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-        )
+        )[0]
         return output_text
         
     def _run_vqa_task(self, task_name: str, meta_info: Dict[str, Any]):
