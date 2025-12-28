@@ -84,7 +84,6 @@ class ModelAdapter(BaseModelAdapter):
         data_len = meta_info["length"]
         sample_dir = meta_info["output_dir"]
         extra_args = getattr(self, "extra_args", {}) or {}
-        print(f"extra_args: {extra_args}")
         save_items = bool(extra_args.get("save_items", True))
         os.makedirs(sample_dir, exist_ok=True)
         os.makedirs(self.get_items_dir(meta_info), exist_ok=True)
@@ -99,7 +98,6 @@ class ModelAdapter(BaseModelAdapter):
         )
         for idx in tqdm(range(rank, data_len, world_size), desc="Running T2I task"):
             data = self.task_manager.get_data(task_name, idx)
-            print(f"data: {data}")
             prompt = data.get("prompt") or data.get("question")
             question_id = str(data.get("id") or data.get("question_id") or idx)
             image_list = self._run_single_prompt(prompt, question_id, sample_dir)

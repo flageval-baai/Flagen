@@ -74,7 +74,6 @@ class ModelAdapter(BaseModelAdapter):
         data_len = meta_info["length"]
         output_dir = meta_info["output_dir"]
         extra_args = getattr(self, "extra_args", {}) or {}
-        print(f"extra_args: {extra_args}")
         save_items = bool(extra_args.get("save_items", True))
         
         os.makedirs(output_dir, exist_ok=True)
