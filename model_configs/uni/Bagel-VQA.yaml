@@ -1,8 +1,7 @@
 tasks:
   files:
-    - file: tasks/t2i/wise/recaption.py
-      data_root: /share/project/mmdataset/t2i/wise/recaption
-    # - file: tasks/t2i/longtext_bench/longtext_bench.py
+    - file: tasks/mmmu/mmmu_val.py
+      data_root: /share/project/mmdataset/MMMU/validation/
     #   data_root: /share/project/mmdataset/t2i/LongText-Bench/
   try_run: true
   output_dir: outputs/Bagel_Recaption/

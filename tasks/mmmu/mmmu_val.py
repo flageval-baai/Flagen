@@ -1,9 +1,3 @@
-config = dict(
-    dataset_path="lmms-lab/MMMU",
-    split="validation",
-    processed_dataset_path="MMMU",
-    processor="process.py",
-)
 
 dataset = dict(
     type="VqaBaseDataset",
@@ -11,7 +5,7 @@ dataset = dict(
         type="PromptTemplate",
         post_prompt="Let's think step by step and put the letter of your final choice after 'Answer: '",
     ),
-    config=config,
+    data_root="/share/project/mmdataset/MMMU/validation",
     name="mmmu_val",
 )
 
