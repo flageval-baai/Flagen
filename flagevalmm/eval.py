@@ -151,6 +151,7 @@ class ServerWrapper:
         
         self.port = model_cfg.get("port", None)
         self.cuda_visible_devices = model_cfg.get("cuda_visible_devices", None)
+        self.world_size = model_cfg.get("world_size", None)
         tasks_cfg = (
             self.run_cfg.get("tasks", {})
             if isinstance(self.run_cfg.get("tasks", {}), dict)
@@ -184,6 +185,10 @@ class ServerWrapper:
             env = os.environ.copy()
             if self.cuda_visible_devices is not None:
                 env["CUDA_VISIBLE_DEVICES"] = self.cuda_visible_devices
+            if self.world_size is not None:
+                env["WORLD_SIZE"] = str(self.world_size)
+                env["PET_WORLD_SIZE"] = str(self.world_size)
+                env["PET_NNODES"] = str(self.world_size)
             if use_torchrun:
                 logger.info(f"Launching adapter with torchrun ({num_procs} processes)")
             # Create a new process group

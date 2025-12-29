@@ -16,8 +16,9 @@ model:
   model_path: /share/project/models/vlm/Qwen-Image
   processor_path: /share/project/models/vlm/Qwen2.5-VL-7B-Instruct
   exec: model_zoo/uni/qwen-image/model_adapter.py
-  port: 28000
+  port: 28012
   cuda_visible_devices: 4,5,6,7
+  world_size: 1
 
 extra_args:
   save_items: true
