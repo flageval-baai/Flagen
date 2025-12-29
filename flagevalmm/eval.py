@@ -117,6 +117,7 @@ class ServerWrapper:
         return finished_tasks
 
     def __init__(self, args):
+        
         self.args = args
         self.exec = args.exec
         self.infer_process = None
@@ -147,7 +148,9 @@ class ServerWrapper:
             self.exec = "model_zoo/vlm/api_model/model_adapter.py"
 
         self.output_dir = self.run_cfg["tasks"]["output_dir"]
-
+        
+        self.port = model_cfg.get("port", None)
+        self.cuda_visible_devices = model_cfg.get("cuda_visible_devices", None)
         tasks_cfg = (
             self.run_cfg.get("tasks", {})
             if isinstance(self.run_cfg.get("tasks", {}), dict)
@@ -178,12 +181,16 @@ class ServerWrapper:
             command = self._build_command(
                 use_torchrun=use_torchrun, num_procs=num_procs
             )
+            env = os.environ.copy()
+            if self.cuda_visible_devices is not None:
+                env["CUDA_VISIBLE_DEVICES"] = self.cuda_visible_devices
             if use_torchrun:
                 logger.info(f"Launching adapter with torchrun ({num_procs} processes)")
             # Create a new process group
             print(f"command: {command}")
             self.infer_process = subprocess.Popen(
                 command,
+                env=env,
                 preexec_fn=os.setsid if os.name != "nt" else None,
                 creationflags=(
                     0 if os.name != "nt" else subprocess.CREATE_NEW_PROCESS_GROUP
@@ -215,19 +222,27 @@ class ServerWrapper:
         command = []
         if self.exec.endswith("py"):
             assert osp.exists(self.exec), f"model path {self.exec} not found"
-            if use_torchrun and num_procs > 1:
+            if use_torchrun:
                 command += [
                     "torchrun",
-                    "--nproc_per_node",
-                    str(num_procs),
-                    self.exec,
                 ]
+                if num_procs > 1:
+                    command += [
+                        "--nproc_per_node",
+                        str(num_procs),
+                    ]
+                if self.port is not None:
+                    command += [
+                        "--master-port",
+                        str(self.port),
+                    ]
             else:
                 command += [
                     "python",
-                    self.exec,
                 ]
-
+            command += [
+                self.exec,
+            ]
         else:
             assert osp.exists(f"{self.exec}/run.sh"), f"run.sh not found in {self.exec}"
             command += [
